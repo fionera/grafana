@@ -9,7 +9,7 @@ import { getGeometryField, LocationFieldMatchers } from './location';
 export interface FrameVectorSourceOptions {}
 
 export class FrameVectorSource<T extends Geometry = Geometry> extends VectorSource<T> {
-  constructor(private location: LocationFieldMatchers) {
+  constructor(private location: LocationFieldMatchers, private dstLocation?: LocationFieldMatchers | null) {
     super({});
   }
 
@@ -43,8 +43,40 @@ export class FrameVectorSource<T extends Geometry = Geometry> extends VectorSour
       return;
     }
 
+    if (!!this.dstLocation) {
+      const dstInfo = getGeometryField(frame, this.dstLocation);
+
+      if (!dstInfo.field) {
+        this.changed();
+        return;
+      }
+
+      for (let i = 0; i < frame.length; i++) {
+        //eslint-disable-next-line
+        const value = info.field.values.get(i) as Point;
+        //eslint-disable-next-line
+        const dstValue = dstInfo.field.values.get(i) as Point;
+
+        //eslint-disable-next-line
+        const geometry = new LineString([value.getCoordinates(), dstValue.getCoordinates()]) as Geometry;
+        this.addFeatureInternal(
+          new Feature({
+            frame,
+            rowIndex: 0,
+            geometry: geometry as T,
+          })
+        );
+      }
+
+      // only call this at the end
+      this.changed();
+
+      return;
+    }
+
     //eslint-disable-next-line
     const field = info.field as Field<Point>;
+    //eslint-disable-next-line
     const geometry = new LineString(field.values.toArray().map((p) => p.getCoordinates())) as Geometry;
     this.addFeatureInternal(
       new Feature({

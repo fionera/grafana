@@ -1,37 +1,41 @@
 import {
-  MapLayerRegistryItem,
-  MapLayerOptions,
-  PanelData,
-  GrafanaTheme2,
-  FrameGeometrySourceMode,
-  PluginState,
-  EventBus,
-  DataHoverEvent,
-  DataHoverClearEvent,
   DataFrame,
+  DataHoverClearEvent,
+  DataHoverEvent,
+  EventBus,
+  Field,
+  FieldType,
+  FrameGeometrySource,
+  FrameGeometrySourceMode,
+  GrafanaTheme2,
+  MapLayerOptions,
+  MapLayerRegistryItem,
+  PanelData,
+  PluginState,
   TIME_SERIES_TIME_FIELD_NAME,
 } from '@grafana/data';
 import Map from 'ol/Map';
-import { FeatureLike } from 'ol/Feature';
-import { Subscription, throttleTime } from 'rxjs';
-import { getGeometryField, getLocationMatchers } from 'app/features/geo/utils/location';
-import { getColorDimension } from 'app/features/dimensions';
-import { defaultStyleConfig, StyleConfig, StyleDimensions } from '../../style/types';
-import { StyleEditor } from '../../editor/StyleEditor';
-import { getStyleConfigState } from '../../style/utils';
+import Feature, {FeatureLike} from 'ol/Feature';
+import {Subscription, throttleTime} from 'rxjs';
+import {getGeometryField, getLocationMatchers, LocationFieldMatchers} from 'app/features/geo/utils/location';
+import {getColorDimension} from 'app/features/dimensions';
+import {defaultStyleConfig, StyleConfig, StyleDimensions} from '../../style/types';
+import {StyleEditor} from '../../editor/StyleEditor';
+import {getStyleConfigState} from '../../style/utils';
 import VectorLayer from 'ol/layer/Vector';
-import { isNumber } from 'lodash';
-import { routeStyle } from '../../style/markers';
-import { FrameVectorSource } from 'app/features/geo/utils/frameVectorSource';
-import { Group as LayerGroup } from 'ol/layer';
+import {isNumber} from 'lodash';
+import {routeStyle} from '../../style/markers';
+import {FrameVectorSource} from 'app/features/geo/utils/frameVectorSource';
+import {Group as LayerGroup} from 'ol/layer';
 import VectorSource from 'ol/source/Vector';
-import { Fill, Stroke, Style, Circle } from 'ol/style';
-import Feature from 'ol/Feature';
-import { alpha } from '@grafana/data/src/themes/colorManipulator';
+import {Circle, Fill, Stroke, Style} from 'ol/style';
+import {alpha} from '@grafana/data/src/themes/colorManipulator';
 
 // Configuration options for Circle overlays
 export interface RouteConfig {
   style: StyleConfig;
+  rowBased: boolean;
+  destination?: FrameGeometrySource;
 }
 
 const defaultOptions: RouteConfig = {
@@ -40,6 +44,10 @@ const defaultOptions: RouteConfig = {
     opacity: 1,
     lineWidth: 2,
   },
+  rowBased: true,
+  destination: {
+    mode: FrameGeometrySourceMode.Coords
+  }
 };
 
 export const ROUTE_LAYER_ID = 'route';
@@ -79,8 +87,14 @@ export const routeLayer: MapLayerRegistryItem<RouteConfig> = {
 
     const style = await getStyleConfigState(config.style);
     const location = await getLocationMatchers(options.location);
-    const source = new FrameVectorSource(location);
-    const vectorLayer = new VectorLayer({ source });
+    let dstLocation: LocationFieldMatchers | null = null;
+    if (options.config?.rowBased) {
+      // @ts-ignore sometimes the mode isn't set, we enforce it to coords
+      options.config.destination.mode = FrameGeometrySourceMode.Coords;
+      dstLocation = await getLocationMatchers(options.config?.destination);
+    }
+    const source = new FrameVectorSource(location, dstLocation);
+    const vectorLayer = new VectorLayer({source});
 
     if (!style.fields) {
       // Set a global style
@@ -93,7 +107,7 @@ export const routeLayer: MapLayerRegistryItem<RouteConfig> = {
           return routeStyle(style.base);
         }
 
-        const values = { ...style.base };
+        const values = {...style.base};
 
         if (dims.color) {
           values.color = dims.color.get(idx);
@@ -187,6 +201,33 @@ export const routeLayer: MapLayerRegistryItem<RouteConfig> = {
 
       // Route layer options
       registerOptionsUI: (builder) => {
+        builder
+          .addBooleanSwitch({
+            path: 'config.rowBased',
+            name: 'Row Based',
+            defaultValue: false,
+          });
+
+        builder
+          .addFieldNamePicker({
+            path: `config.destination.latitude`,
+            name: 'Destination Latitude field',
+            settings: {
+              filter: (f: Field) => f.type === FieldType.number,
+              noFieldsMessage: 'No numeric fields found',
+            },
+            showIf: (options) => options.config.rowBased
+          })
+          .addFieldNamePicker({
+            path: `config.destination.longitude`,
+            name: 'Destination Longitude field',
+            settings: {
+              filter: (f: Field) => f.type === FieldType.number,
+              noFieldsMessage: 'No numeric fields found',
+            },
+            showIf: (options) => options.config.rowBased
+          });
+
         builder
           .addCustomEditor({
             id: 'config.style',
